@@ -216,9 +216,12 @@ CREATE TABLE IF NOT EXISTS resource_leases (
   generation INTEGER NOT NULL,
   state INTEGER NOT NULL,
   start_clock INTEGER NOT NULL,
-  end_clock INTEGER NOT NULL,
-  PRIMARY KEY (resource_type, resource_key)
+  end_clock INTEGER NOT NULL
 );
+-- The unique constraint protects only open occupancy: a released lease (state=1)
+-- stays on disk as an auditable historical record but no longer blocks a new
+-- open task from acquiring the same resource (domain rule 2).
+CREATE UNIQUE INDEX IF NOT EXISTS resource_leases_open ON resource_leases(resource_type, resource_key) WHERE state = 0;
 CREATE TABLE IF NOT EXISTS observations (
   task_id TEXT NOT NULL,
   age_day INTEGER NOT NULL,

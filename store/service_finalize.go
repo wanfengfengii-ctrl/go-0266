@@ -100,6 +100,15 @@ func (s *SQLite) FinalizeTask(ctx context.Context, id task.ID, req FinalizeReque
 		if err := updateTaskState(ctx, tx, id, terminal, row.Generation+1, reason); err != nil {
 			return err
 		}
+		// A terminal verdict ends the batch's hold on its locked resources.
+		// Release every still-open lease so a successor batch may re-acquire the
+		// same physical shed, probe window, sprout slot and test wells, and the
+		// batch number, basket seals and blind codes (domain rule 2: uniqueness
+		// protects only open occupancy). Released rows stay on disk as the
+		// auditable historical record.
+		if err := releaseLeases(ctx, tx, id, clock); err != nil {
+			return err
+		}
 		if err := insertAudit(ctx, tx, id, clock, "finalized "+string(verdict)); err != nil {
 			return err
 		}

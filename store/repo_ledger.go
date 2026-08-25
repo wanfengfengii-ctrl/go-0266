@@ -108,6 +108,18 @@ func findBlindCode(ctx context.Context, q dbtx, id task.ID, code string) (ledger
 	return s, err
 }
 
+// releaseLeases marks every still-open lease held by a task as released and
+// stamps the end clock. The open-occupancy unique index then no longer covers
+// those rows, so a new task may re-acquire the same resources (domain rule 2:
+// uniqueness protects only open occupancy). The released rows are kept on disk
+// as an auditable historical record. It is a no-op for tasks with no leases.
+func releaseLeases(ctx context.Context, tx *sql.Tx, id task.ID, clock int64) error {
+	_, err := tx.ExecContext(ctx,
+		"UPDATE resource_leases SET state = 1, end_clock = ? WHERE task_id = ? AND state = 0",
+		clock, id)
+	return err
+}
+
 // loadResourceKeys returns the resource keys of a given type held by a task,
 // ordered deterministically.
 func loadResourceKeys(ctx context.Context, q dbtx, id task.ID, rt ledger.ResourceType) ([]string, error) {

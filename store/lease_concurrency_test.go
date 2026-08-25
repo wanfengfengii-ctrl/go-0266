@@ -172,3 +172,64 @@ func TestConcurrentWellOccupationLeavesNoLease(t *testing.T) {
 		t.Fatal("test well must be held by the winning task")
 	}
 }
+
+// TestCancelReleasesOccupiedResources reproduces the reported defect: a batch
+// that sealed its samples (occupying the healing shed, probe window, sprout
+// slot and test wells) is cancelled, and a successor batch with a fresh batch
+// number, basket seals and blind codes must be able to re-acquire the same
+// physical resources instead of being told they are still held.
+func TestCancelReleasesOccupiedResources(t *testing.T) {
+	s := newMemStore(t)
+
+	// First batch: lock, confirm and seal so the physical resources are held.
+	reqA := defaultLockRequest()
+	idA, genA := advanceToSealing(t, s, reqA)
+	if _, err := s.SampleSeal(context.Background(), idA, sealSamples(genA)); err != nil {
+		t.Fatalf("first sample seal: %v", err)
+	}
+	for _, rt := range []ledger.ResourceType{
+		ledger.ResourceHealingShed, ledger.ResourceProbeWindow,
+		ledger.ResourceSproutSlot, ledger.ResourceTestWell,
+	} {
+		if _, held := s.Held(rt, "shed-1"); rt == ledger.ResourceHealingShed && !held {
+			t.Fatalf("healing shed must be held after seal")
+		}
+	}
+
+	// Cancel the first batch from its open (occupying_shed) state.
+	genA = currentGen(t, s, idA)
+	if _, err := s.FinalizeTask(context.Background(), idA, FinalizeRequest{Generation: genA, Cancelled: true}); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	// After cancellation every physical resource must be free for re-use.
+	for _, c := range []struct {
+		rt  ledger.ResourceType
+		key string
+	}{
+		{ledger.ResourceHealingShed, "shed-1"},
+		{ledger.ResourceProbeWindow, "probe-1"},
+		{ledger.ResourceSproutSlot, "slot-1"},
+		{ledger.ResourceTestWell, "well-1"},
+	} {
+		if _, held := s.Held(c.rt, ledger.ResourceKey(c.key)); held {
+			t.Fatalf("%s %q still held after cancellation", c.rt, c.key)
+		}
+	}
+
+	// A successor batch with a fresh batch number, basket seals and blind codes
+	// but the same physical shed and test well must be able to lock, confirm
+	// and seal without a "resource already held" conflict.
+	reqB := defaultLockRequest()
+	reqB.Batch = "B-2"
+	reqB.BasketSeals = []string{"seal-3", "seal-4"}
+	reqB.BlindCodes = []string{"code-3", "code-4"}
+	idB, genB := advanceToSealing(t, s, reqB)
+	bSamples := SampleSealRequest{
+		Generation: genB,
+		Samples:    []SampleBinding{{BasketSeal: "seal-3", BlindCode: "code-3"}, {BasketSeal: "seal-4", BlindCode: "code-4"}},
+	}
+	if _, err := s.SampleSeal(context.Background(), idB, bSamples); err != nil {
+		t.Fatalf("successor sample seal must succeed after cancellation: %v", err)
+	}
+}
