@@ -42,10 +42,13 @@ func (s *SQLite) FinalizeTask(ctx context.Context, id task.ID, req FinalizeReque
 			}
 			return errConflict("operation id reused with different content")
 		}
-		if !req.Cancelled {
-			if err := task.GuardGeneration(row.Generation, req.Generation); err != nil {
-				return errStale(err.Error())
-			}
+		// Every advancement — including a cancellation — must carry the current
+		// generation (domain rule 1, failure boundary 5). A stale-generation
+		// request must not be able to terminate the current task, so the guard
+		// runs unconditionally; the "any open state" allowance for cancellation
+		// is enforced by GuardOpen below, not by skipping the generation check.
+		if err := task.GuardGeneration(row.Generation, req.Generation); err != nil {
+			return errStale(err.Error())
 		}
 		if err := task.GuardOpen(row.State); err != nil {
 			return errTerminal(err.Error())
