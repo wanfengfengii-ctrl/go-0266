@@ -53,18 +53,32 @@ func (s *SQLite) SampleSeal(ctx context.Context, id task.ID, req SampleSealReque
 			return errConflict("duplicate seal", err.Error())
 		}
 
-		// The submitted bindings must exactly cover the locked basket seals.
+		// The submitted bindings must exactly cover the locked basket seals and
+		// use exactly the blind code set frozen at lock time; a code that was not
+		// locked may not be bound here (domain rule 4 — the sealed sample must
+		// carry a locked blind code, or later disease evidence could be filed
+		// against a code the task never declared).
 		lockedSeals, err := loadResourceKeys(ctx, tx, id, ledger.ResourceBasketSeal)
 		if err != nil {
 			return err
 		}
+		lockedCodes, err := loadResourceKeys(ctx, tx, id, ledger.ResourceBlindCode)
+		if err != nil {
+			return err
+		}
 		seals := make([]string, len(req.Samples))
+		codes := make([]string, len(req.Samples))
 		for i, b := range req.Samples {
 			seals[i] = b.BasketSeal
+			codes[i] = b.BlindCode
 		}
 		sort.Strings(seals)
+		sort.Strings(codes)
 		if !stringSlicesEqual(seals, lockedSeals) {
 			return errConflict("sample seals do not match locked set")
+		}
+		if !stringSlicesEqual(codes, lockedCodes) {
+			return errConflict("blind codes do not match locked set")
 		}
 
 		clock, err := s.nextClock(ctx, tx)
