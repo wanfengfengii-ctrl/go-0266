@@ -50,6 +50,10 @@ func (s *SQLite) Observe(ctx context.Context, id task.ID, ageDay evidence.AgeDay
 		return ObserveResult{}, errConflict("observation not allowed in state " + row.State.String())
 	}
 
+	if !dayLocked(int(ageDay), row.ObserveDays) {
+		return ObserveResult{}, errInvalid("age day not in locked day-age set", strconv.Itoa(int(ageDay)))
+	}
+
 	cells, err := validateObserveCells(ctx, tx, id, row, ageDay, req)
 	if err != nil {
 		return ObserveResult{}, err
@@ -259,4 +263,17 @@ func sealIDs(seals []string) []evidence.BasketSeal {
 		out[i] = evidence.BasketSeal(s)
 	}
 	return out
+}
+
+// dayLocked reports whether the submitted age_day is one of the locked
+// observation day-ages. Only locked day-ages may form valid coverage so that an
+// observation committed under an out-of-lock day can never mask a missing
+// locked day at the final barrier (domain rule 5 / acceptance 8).
+func dayLocked(day int, lockedDays []int) bool {
+	for _, d := range lockedDays {
+		if d == day {
+			return true
+		}
+	}
+	return false
 }

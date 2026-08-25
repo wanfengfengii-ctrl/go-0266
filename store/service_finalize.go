@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"potatoeye-cutseed-sprout-gate/arbiter"
+	"potatoeye-cutseed-sprout-gate/evidence"
 	"potatoeye-cutseed-sprout-gate/fixed"
 	"potatoeye-cutseed-sprout-gate/task"
 )
@@ -164,17 +166,73 @@ func (s *SQLite) computeSummary(ctx context.Context, tx *sql.Tx, row TaskRow) (a
 	if err != nil {
 		return summary, err
 	}
-	expected := len(row.ObserveDays) * len(seals) * len(row.Points)
+	points := row.Points
+	// The final barrier may only accept full coverage of the locked day-age
+	// set (domain rule 5 / acceptance 8). A cell whose age_day falls outside the
+	// locked set (for example a day submitted to the wrong path) must never
+	// count toward closure, even after bud-eye verification wrote a capacity
+	// across every age for the (seal, point) pair.
+	expected := len(row.ObserveDays) * len(seals) * len(points)
 	var verified int
 	if err := tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM observations WHERE task_id = ? AND bud_eye_capacity > 0", row.ID).Scan(&verified); err != nil {
+		"SELECT COUNT(*) FROM observations WHERE task_id = ? AND age_day IN ("+placeholders(len(row.ObserveDays))+") AND bud_eye_capacity > 0",
+		queryArgs(row.ID, row.ObserveDays)...).Scan(&verified); err != nil {
 		return summary, err
 	}
-	summary.Complete = verified == expected
-	if verified < expected {
+	summary.Complete = verified == expected && everyLockedDayCovered(row.ObserveDays, obs, seals, points)
+	if verified < expected || !summary.Complete {
 		summary.BudEyeOK = false
 	}
 	return summary, nil
+}
+
+// placeholders builds a comma-joined "?" placeholder list of n entries for an
+// IN clause.
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	out := make([]byte, 0, n*2-1)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, '?')
+	}
+	return string(out)
+}
+
+// queryArgs prepends id to the observe days for use as the positional args of
+// the IN-bound coverage count query.
+func queryArgs(id task.ID, days []int) []any {
+	args := make([]any, 0, 1+len(days))
+	args = append(args, id)
+	for _, d := range days {
+		args = append(args, d)
+	}
+	return args
+}
+
+// everyLockedDayCovered reports whether every locked day-age carries a full
+// (seal, point) coverage matrix in the committed observations. This is the
+// strict per-day closure the final barrier relies on so that a missing locked
+// day can never be masked by cells committed under an out-of-lock day-age.
+func everyLockedDayCovered(days []int, obs []evidence.Observation, seals []string, points []string) bool {
+	type cell struct{}
+	covered := make(map[string]cell, len(obs))
+	for _, o := range obs {
+		covered[fmt.Sprintf("%d\x00%s\x00%s", o.AgeDay, o.BasketSeal, o.PointID)] = cell{}
+	}
+	for _, day := range days {
+		for _, s := range seals {
+			for _, p := range points {
+				if _, ok := covered[fmt.Sprintf("%d\x00%s\x00%s", day, s, p)]; !ok {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // computeWaterLossRate returns the fixed-point water-loss rate (loss/total).
