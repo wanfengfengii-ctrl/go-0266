@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -135,16 +136,23 @@ func acquireLeases(ctx context.Context, tx *sql.Tx, id task.ID, gen task.Generat
 }
 
 // recordIdempotency stores an operation result for later idempotent replay. An
-// empty operation ID skips recording.
+// empty operation ID skips recording. The response is captured verbatim so a
+// retry after a lost response replays the original result rather than
+// recomputing it from mutable state.
 func recordIdempotency(ctx context.Context, tx *sql.Tx, op task.OperationID, id task.ID, gen task.Generation, req, resp any, clock int64) error {
 	if op == "" {
 		return nil
+	}
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return err
 	}
 	return putIdempotency(ctx, tx, IdempotencyRecord{
 		OperationID:  op,
 		TaskID:       id,
 		RequestHash:  hashRequest(req),
 		ResponseHash: hashRequest(resp),
+		ResponseJSON: raw,
 		Generation:   gen,
 		CreatedClock: clock,
 	})

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 
@@ -32,11 +33,14 @@ func (s *SQLite) AddDiseaseEvidence(ctx context.Context, id task.ID, req Disease
 		return DiseaseResult{}, err
 	} else if ok {
 		if rec.RequestHash == hashRequest(req) {
-			v, err := nextDiseaseVersion(ctx, tx, id)
-			if err != nil {
+			// Replay the original result verbatim. The disease evidence version
+			// and the adapter_call_id are bound to the first call and cannot be
+			// recomputed from mutable state: a later evidence append would make
+			// nextDiseaseVersion return the newest version, and the source call
+			// id of that version would not match the original plate read.
+			if err := json.Unmarshal(rec.ResponseJSON, &result); err != nil {
 				return DiseaseResult{}, err
 			}
-			result = DiseaseResult{Version: v - 1}
 			if err := tx.Commit(); err != nil {
 				return DiseaseResult{}, err
 			}

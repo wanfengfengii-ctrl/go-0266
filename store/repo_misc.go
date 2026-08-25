@@ -23,12 +23,16 @@ func hashRequest(v any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// IdempotencyRecord is one operation-keyed result (acceptance 3).
+// IdempotencyRecord is one operation-keyed result (acceptance 3). ResponseJSON
+// holds the verbatim response first returned for the operation so a retry after
+// a lost response replays the original result rather than recomputing it from
+// mutable state.
 type IdempotencyRecord struct {
 	OperationID  task.OperationID
 	TaskID       task.ID
 	RequestHash  string
 	ResponseHash string
+	ResponseJSON []byte
 	Generation   task.Generation
 	CreatedClock int64
 	Conflict     bool
@@ -38,8 +42,8 @@ func getIdempotency(ctx context.Context, q dbtx, op task.OperationID) (Idempoten
 	var r IdempotencyRecord
 	var conflict int
 	err := q.QueryRowContext(ctx,
-		"SELECT operation_id, task_id, request_hash, response_hash, generation, created_clock, conflict FROM idempotency_records WHERE operation_id = ?",
-		op).Scan(&r.OperationID, &r.TaskID, &r.RequestHash, &r.ResponseHash, &r.Generation, &r.CreatedClock, &conflict)
+		"SELECT operation_id, task_id, request_hash, response_hash, response_json, generation, created_clock, conflict FROM idempotency_records WHERE operation_id = ?",
+		op).Scan(&r.OperationID, &r.TaskID, &r.RequestHash, &r.ResponseHash, &r.ResponseJSON, &r.Generation, &r.CreatedClock, &conflict)
 	if err == sql.ErrNoRows {
 		return r, false, nil
 	}
@@ -56,8 +60,8 @@ func putIdempotency(ctx context.Context, tx *sql.Tx, r IdempotencyRecord) error 
 		conflict = 1
 	}
 	_, err := tx.ExecContext(ctx,
-		"INSERT INTO idempotency_records (operation_id, task_id, request_hash, response_hash, generation, created_clock, conflict) VALUES (?,?,?,?,?,?,?)",
-		r.OperationID, r.TaskID, r.RequestHash, r.ResponseHash, r.Generation, r.CreatedClock, conflict)
+		"INSERT INTO idempotency_records (operation_id, task_id, request_hash, response_hash, response_json, generation, created_clock, conflict) VALUES (?,?,?,?,?,?,?,?)",
+		r.OperationID, r.TaskID, r.RequestHash, r.ResponseHash, []byte(r.ResponseJSON), r.Generation, r.CreatedClock, conflict)
 	return err
 }
 

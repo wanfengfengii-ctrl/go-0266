@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   task_id TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   response_hash TEXT NOT NULL,
+  response_json BLOB NOT NULL,
   generation INTEGER NOT NULL,
   created_clock INTEGER NOT NULL,
   conflict INTEGER NOT NULL
