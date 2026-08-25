@@ -41,6 +41,13 @@ func (s *SQLite) CutConfirm(ctx context.Context, id task.ID, req CutConfirmReque
 			return errConflict("cut confirmation not allowed in state " + row.State.String())
 		}
 
+		// The confirmation content must match the frozen lock snapshot; a stale
+		// cellar summary or any other drift must not advance the state
+		// (acceptance 3: 陈旧规则或错误窖位不得推进状态).
+		if !task.SnapshotEqual(req.Snapshot, row.snapshot()) {
+			return errConflict("snapshot mismatch", task.ErrSnapshotMismatch.Error())
+		}
+
 		rule, err := s.Catalog().Match(row.Plot, row.Variety)
 		if err != nil {
 			return errInvalid("rule missing", err.Error())
