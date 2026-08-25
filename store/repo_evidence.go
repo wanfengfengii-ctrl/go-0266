@@ -28,11 +28,14 @@ func appendObservationTx(ctx context.Context, tx *sql.Tx, o evidence.Observation
 }
 
 // updateBudEyeTx records a bud-eye active count and its capacity across every
-// age-day cell for a (seal, point) pair, marking those cells bud-eye verified.
+// age-day cell for a single (seal, point) pair, marking those cells bud-eye
+// verified. The point_id must scope the update so a missing point leaves its
+// cells unverified; otherwise one submitted point would stamp capacity onto the
+// sibling points of the same basket and the closure count would falsely pass.
 func updateBudEyeTx(ctx context.Context, tx *sql.Tx, id task.ID, seal evidence.BasketSeal, point evidence.PointID, active, capacity int) error {
 	res, err := tx.ExecContext(ctx,
-		"UPDATE observations SET bud_eye_active = ?, bud_eye_capacity = ? WHERE task_id = ? AND basket_seal = ?",
-		active, capacity, id, seal)
+		"UPDATE observations SET bud_eye_active = ?, bud_eye_capacity = ? WHERE task_id = ? AND basket_seal = ? AND point_id = ?",
+		active, capacity, id, seal, point)
 	if err != nil {
 		return err
 	}
