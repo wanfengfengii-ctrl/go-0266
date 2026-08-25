@@ -27,12 +27,7 @@ func (s *SQLite) Review(ctx context.Context, id task.ID, req ReviewRequest) (Rev
 			return err
 		} else if ok {
 			if rec.RequestHash == hashRequest(req) {
-				reviews, err := loadReviews(ctx, tx, id)
-				if err != nil {
-					return err
-				}
-				result = ReviewResult{Reviews: len(reviews)}
-				return nil
+				return decodeReplay(rec, &result)
 			}
 			return errConflict("operation id reused with different content")
 		}

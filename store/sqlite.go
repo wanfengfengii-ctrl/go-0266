@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   task_id TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   response_hash TEXT NOT NULL,
+  response_body TEXT NOT NULL DEFAULT '',
   generation INTEGER NOT NULL,
   created_clock INTEGER NOT NULL,
   conflict INTEGER NOT NULL
@@ -295,6 +296,20 @@ func (s *SQLite) migrate() error {
 		}
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
+		}
+	}
+	// Additive migrations for databases created before a column existed. Each is
+	// idempotent: SQLite errors when the column is already present, which we
+	// treat as a no-op. Keeping the stored response body lets an idempotent
+	// replay return the exact original result instead of a re-derived one.
+	additive := []string{
+		"ALTER TABLE idempotency_records ADD COLUMN response_body TEXT NOT NULL DEFAULT ''",
+	}
+	for _, stmt := range additive {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
 		}
 	}
 	return nil

@@ -26,7 +26,7 @@ func (s *SQLite) CutConfirm(ctx context.Context, id task.ID, req CutConfirmReque
 			return err
 		} else if ok {
 			if rec.RequestHash == hashRequest(req) {
-				return s.replayConfirm(ctx, tx, id, &result)
+				return decodeReplay(rec, &result)
 			}
 			return errConflict("operation id reused with different content")
 		}
@@ -99,16 +99,6 @@ func (s *SQLite) CutConfirm(ctx context.Context, id task.ID, req CutConfirmReque
 		return CutConfirmResult{}, err
 	}
 	return result, nil
-}
-
-func (s *SQLite) replayConfirm(ctx context.Context, tx *sql.Tx, id task.ID, result *CutConfirmResult) error {
-	confirmed, err := loadCutConfirmers(ctx, tx, id)
-	if err != nil {
-		return err
-	}
-	result.Confirmed = confirmed
-	result.Complete = len(confirmed) >= 2
-	return nil
 }
 
 func personnelStrings(v []catalog.PersonnelID) []string {

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -140,11 +141,13 @@ func recordIdempotency(ctx context.Context, tx *sql.Tx, op task.OperationID, id 
 	if op == "" {
 		return nil
 	}
+	body, _ := json.Marshal(resp)
 	return putIdempotency(ctx, tx, IdempotencyRecord{
 		OperationID:  op,
 		TaskID:       id,
 		RequestHash:  hashRequest(req),
 		ResponseHash: hashRequest(resp),
+		ResponseBody: string(body),
 		Generation:   gen,
 		CreatedClock: clock,
 	})

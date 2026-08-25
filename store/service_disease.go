@@ -32,11 +32,9 @@ func (s *SQLite) AddDiseaseEvidence(ctx context.Context, id task.ID, req Disease
 		return DiseaseResult{}, err
 	} else if ok {
 		if rec.RequestHash == hashRequest(req) {
-			v, err := nextDiseaseVersion(ctx, tx, id)
-			if err != nil {
+			if err := decodeReplay(rec, &result); err != nil {
 				return DiseaseResult{}, err
 			}
-			result = DiseaseResult{Version: v - 1}
 			if err := tx.Commit(); err != nil {
 				return DiseaseResult{}, err
 			}

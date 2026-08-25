@@ -29,6 +29,10 @@ type IdempotencyRecord struct {
 	TaskID       task.ID
 	RequestHash  string
 	ResponseHash string
+	// ResponseBody is the serialized original response so a later replay of the
+	// same operation id returns the exact stored result instead of one
+	// re-derived from the (possibly since-changed) task state.
+	ResponseBody string
 	Generation   task.Generation
 	CreatedClock int64
 	Conflict     bool
@@ -38,8 +42,8 @@ func getIdempotency(ctx context.Context, q dbtx, op task.OperationID) (Idempoten
 	var r IdempotencyRecord
 	var conflict int
 	err := q.QueryRowContext(ctx,
-		"SELECT operation_id, task_id, request_hash, response_hash, generation, created_clock, conflict FROM idempotency_records WHERE operation_id = ?",
-		op).Scan(&r.OperationID, &r.TaskID, &r.RequestHash, &r.ResponseHash, &r.Generation, &r.CreatedClock, &conflict)
+		"SELECT operation_id, task_id, request_hash, response_hash, response_body, generation, created_clock, conflict FROM idempotency_records WHERE operation_id = ?",
+		op).Scan(&r.OperationID, &r.TaskID, &r.RequestHash, &r.ResponseHash, &r.ResponseBody, &r.Generation, &r.CreatedClock, &conflict)
 	if err == sql.ErrNoRows {
 		return r, false, nil
 	}
@@ -56,9 +60,21 @@ func putIdempotency(ctx context.Context, tx *sql.Tx, r IdempotencyRecord) error 
 		conflict = 1
 	}
 	_, err := tx.ExecContext(ctx,
-		"INSERT INTO idempotency_records (operation_id, task_id, request_hash, response_hash, generation, created_clock, conflict) VALUES (?,?,?,?,?,?,?)",
-		r.OperationID, r.TaskID, r.RequestHash, r.ResponseHash, r.Generation, r.CreatedClock, conflict)
+		"INSERT INTO idempotency_records (operation_id, task_id, request_hash, response_hash, response_body, generation, created_clock, conflict) VALUES (?,?,?,?,?,?,?,?)",
+		r.OperationID, r.TaskID, r.RequestHash, r.ResponseHash, r.ResponseBody, r.Generation, r.CreatedClock, conflict)
 	return err
+}
+
+// decodeReplay restores the exact response stored for an operation id into out.
+// Returning the stored result (rather than one re-derived from current state)
+// is what makes an idempotent retry stable: a later confirmation, review or
+// evidence write cannot change the answer a previous operation id returns
+// (acceptance 3: 同一操作号同内容重试返回既有结果).
+func decodeReplay(rec IdempotencyRecord, out any) error {
+	if rec.ResponseBody == "" {
+		return nil
+	}
+	return json.Unmarshal([]byte(rec.ResponseBody), out)
 }
 
 func insertReview(ctx context.Context, tx *sql.Tx, review arbiter.Review) error {
