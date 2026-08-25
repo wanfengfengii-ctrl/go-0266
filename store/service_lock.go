@@ -15,6 +15,12 @@ import (
 // Lock freezes every identifier, resource window and threshold snapshot for a
 // cut-seed batch and generates the task generation (business flow 1). It runs
 // in a single transaction so a conflict rolls back every lease atomically.
+//
+// The frontend re-sends POST /v1/tasks/lock verbatim with the same operation id
+// after a network timeout. The idempotency lookup at the top of the
+// transaction replays the task id, generation and leases from the first write
+// instead of re-acquiring leases (which the first write already holds) and
+// returning a resource-already-held conflict (acceptance 3).
 func (s *SQLite) Lock(ctx context.Context, req LockRequest) (LockResult, error) {
 	if err := validateLockRequest(req); err != nil {
 		return LockResult{}, err
@@ -22,6 +28,15 @@ func (s *SQLite) Lock(ctx context.Context, req LockRequest) (LockResult, error) 
 
 	var result LockResult
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		if rec, ok, err := getIdempotency(ctx, tx, req.OperationID); err != nil {
+			return err
+		} else if ok {
+			if rec.RequestHash == hashRequest(req) {
+				return s.replayLock(ctx, tx, rec.TaskID, &result)
+			}
+			return errConflict("operation id reused with different content")
+		}
+
 		rule, err := s.Catalog().Match(req.Plot, req.Variety)
 		if err != nil {
 			return errInvalid("plot/variety mismatch", err.Error())
@@ -148,4 +163,23 @@ func recordIdempotency(ctx context.Context, tx *sql.Tx, op task.OperationID, id 
 		Generation:   gen,
 		CreatedClock: clock,
 	})
+}
+
+// replayLock rebuilds the original LockResult from the persisted task and its
+// resource leases, so a verbatim retry with the same operation id returns the
+// first task id instead of failing on the leases the first write holds.
+func (s *SQLite) replayLock(ctx context.Context, tx *sql.Tx, id task.ID, result *LockResult) error {
+	row, err := getTaskRow(ctx, tx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return errNotFound("task not found")
+		}
+		return err
+	}
+	leaseKeys, err := loadLeaseKeys(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	*result = LockResult{TaskID: row.ID, Generation: row.Generation, Leases: leaseKeys}
+	return nil
 }

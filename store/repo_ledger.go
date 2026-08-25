@@ -127,3 +127,25 @@ func loadResourceKeys(ctx context.Context, q dbtx, id task.ID, rt ledger.Resourc
 	}
 	return out, rows.Err()
 }
+
+// loadLeaseKeys returns every lease key (as ledger.LeaseKey, "type:key") held by
+// a task, ordered by (resource_type, resource_key) so the replayed set matches
+// the deterministic order produced by acquireLeases at lock time.
+func loadLeaseKeys(ctx context.Context, q dbtx, id task.ID) ([]string, error) {
+	rows, err := q.QueryContext(ctx,
+		"SELECT resource_type, resource_key FROM resource_leases WHERE task_id = ? ORDER BY resource_type, resource_key", id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var rt ledger.ResourceType
+		var key ledger.ResourceKey
+		if err := rows.Scan(&rt, &key); err != nil {
+			return nil, err
+		}
+		out = append(out, ledger.LeaseKey(rt, key))
+	}
+	return out, rows.Err()
+}
