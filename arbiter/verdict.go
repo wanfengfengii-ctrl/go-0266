@@ -27,18 +27,30 @@ type EvidenceSummary struct {
 	Complete bool
 }
 
-// SelectVerdict applies the locked thresholds and closure state to choose one
-// of the three terminal outcomes. A disease-positive batch is quarantined; a
-// fully closed batch that meets every threshold and has two independent reviews
-// is ready to sprout; otherwise the barrier refuses with ErrNotFinalizable.
-func SelectVerdict(summary EvidenceSummary, reviews int) (Verdict, error) {
+// SelectVerdict applies the locked thresholds, closure state and the
+// independent reviewers' opinions to choose one of the three terminal
+// outcomes. A disease-positive batch is quarantined by evidence; a clean batch
+// that any reviewer judged diseased is likewise quarantined so the final
+// verdict respects the review opinions (尊重复核意见); a fully closed batch
+// that meets every threshold and has two independent reviewers who did not
+// call for quarantine is ready to sprout; otherwise the barrier refuses with
+// ErrNotFinalizable.
+func SelectVerdict(summary EvidenceSummary, reviews []Review) (Verdict, error) {
 	if !summary.DiseaseClean {
 		return VerdictDiseaseQuarantine, nil
+	}
+	// Respect the independent reviewers' opinions: if any qualified reviewer
+	// judged the batch diseased, the final verdict quarantines regardless of
+	// the clean evidence summary.
+	for _, r := range reviews {
+		if r.Decision == VerdictDiseaseQuarantine {
+			return VerdictDiseaseQuarantine, nil
+		}
 	}
 	if !summary.Complete || !summary.SuberizationOK || !summary.WaterLossOK || !summary.BudEyeOK {
 		return "", ErrNotFinalizable
 	}
-	if reviews < 2 {
+	if len(reviews) < 2 {
 		return "", ErrNotFinalizable
 	}
 	return VerdictReadyToSprout, nil

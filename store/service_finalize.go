@@ -69,13 +69,13 @@ func (s *SQLite) FinalizeTask(ctx context.Context, id task.ID, req FinalizeReque
 			if err != nil {
 				return err
 			}
-			v, err := arbiter.SelectVerdict(summary, len(reviews))
+			v, err := arbiter.SelectVerdict(summary, reviews)
 			if err != nil {
 				return errNotFinalizable(err.Error())
 			}
 			verdict = v
 			if verdict == arbiter.VerdictDiseaseQuarantine {
-				reason = "disease threshold exceeded"
+				reason = quarantineReason(summary, reviews)
 			}
 		}
 
@@ -127,6 +127,23 @@ func stateForVerdict(v arbiter.Verdict) task.State {
 	default:
 		return task.StateCancelled
 	}
+}
+
+// quarantineReason derives the deterministically ordered audit reason for a
+// disease quarantine. A quarantine driven by evidence (a threshold-exceeding
+// reading) is reported as such even when reviewers voted to sprout; a clean
+// batch quarantined solely on reviewer opinion is reported as review-driven so
+// the terminal reason stays faithful to why the batch was isolated.
+func quarantineReason(summary arbiter.EvidenceSummary, reviews []arbiter.Review) string {
+	if !summary.DiseaseClean {
+		return "disease threshold exceeded"
+	}
+	for _, r := range reviews {
+		if r.Decision == arbiter.VerdictDiseaseQuarantine {
+			return "reviewer requested quarantine"
+		}
+	}
+	return "disease threshold exceeded"
 }
 
 // computeSummary derives the evidence closure projection for the final barrier.
